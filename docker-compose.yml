@@ -1,0 +1,20 @@
+services:
+  watermark-lab:
+    build: .
+    container_name: cc-watermark-lab-watermark-bug-15
+    ports:
+      - "7640:7000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "7000"
+      DATABASE_PATH: /app/instance/watermark_lab.db
+    volumes:
+      - watermark_lab_data:/app/instance
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/login', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+volumes:
+  watermark_lab_data:

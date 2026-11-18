@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>血缘水印台</title>
+  <link rel="stylesheet" href="/static/css/watermark.css" />
+</head>
+<body>
+  <div class="frame">
+    <header>
+      <div>
+        <p class="eyebrow" id="lab-name">血缘水印台</p>
+        <h1 style="margin:0;font-size:1.25rem">产出表盖印与追索</h1>
+      </div>
+      <button type="button" class="ghost" id="btn-logout">退出</button>
+    </header>
+    <div class="content">
+      <p class="muted" id="msg"></p>
+      <div id="view"></div>
+    </div>
+    <nav class="dock">
+      <button type="button" data-tab="templates">模板</button>
+      <button type="button" data-tab="batches" class="on">批次</button>
+      <button type="button" data-tab="trace">追索</button>
+      <button type="button" data-tab="gaps">缺口</button>
+    </nav>
+  </div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
