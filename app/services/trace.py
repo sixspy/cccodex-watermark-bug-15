@@ -1,5 +1,6 @@
 from app.db import get_db
-from app.services.errors import ServiceError
+from app.errors import ServiceError
+from app.services.qi import qi_check
 
 
 def trace_downstream(watermark_value: str, db_path: str | None = None) -> dict:
@@ -20,19 +21,47 @@ def trace_downstream(watermark_value: str, db_path: str | None = None) -> dict:
             codes,
         ).fetchall()
         down_codes = sorted({e["downstream_run_code"] for e in edges})
+        released = {
+            r["run_code"]: dict(r)
+            for r in conn.execute(
+                "SELECT * FROM release_records"
+            ).fetchall()
+        }
         downstream = []
+        withheld = []
         if down_codes:
             ph2 = ",".join("?" for _ in down_codes)
-            downstream = [
-                dict(r)
-                for r in conn.execute(
-                    f"SELECT * FROM run_batches WHERE run_code IN ({ph2}) ORDER BY id",
-                    down_codes,
-                ).fetchall()
-            ]
+            rows = conn.execute(
+                f"SELECT * FROM run_batches WHERE run_code IN ({ph2}) ORDER BY id",
+                down_codes,
+            ).fetchall()
+            for r in rows:
+                q = qi_check(conn, r["run_code"])
+                rec = released.get(r["run_code"])
+                item = {
+                    **dict(r),
+                    "qi_complete": q["complete"],
+                    "missing": q["missing"],
+                    "broken_chain": q["broken_chain"],
+                    "credential": q["credential"],
+                    "released": rec is not None,
+                    "release_credential": rec["credential"] if rec else None,
+                }
+                # 复验闸口：缺印却带放行态的记录不得被读到。
+                if rec is not None and not q["complete"]:
+                    withheld.append(
+                        {
+                            "run_code": r["run_code"],
+                            "release_credential": rec["credential"],
+                            "missing": q["missing"],
+                        }
+                    )
+                    continue
+                downstream.append(item)
         return {
             "watermark_value": value,
             "sources": [dict(s) for s in sources],
             "edges": [dict(e) for e in edges],
             "downstream": downstream,
+            "withheld": withheld,
         }

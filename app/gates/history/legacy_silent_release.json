@@ -1,0 +1,11 @@
+{
+  "gate_id": "legacy-silent-release",
+  "gate_version": 0,
+  "title": "旧门槛（已废止）：无齐检直接放行",
+  "requirement": "none",
+  "description": "历史门槛：不校验印记值齐备，点放行即落放行态。留存只读，不得再作为现行齐检凭证。",
+  "immutable": true,
+  "retired_at": "2026-11-18",
+  "retired_reason": "缺印批次被静默放行，晋升为 qi-check-downstream",
+  "superseded_by": "qi-check-downstream"
+}

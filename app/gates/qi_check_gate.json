@@ -1,0 +1,10 @@
+{
+  "gate_id": "qi-check-downstream",
+  "gate_version": 1,
+  "title": "下游表印记值齐检门槛",
+  "requirement": "self_and_upstream_all_stamped",
+  "description": "下游批次放行前，本批与顺藤全部上游批次的印记值必须齐备；任一缺印即拦截，禁止入库。",
+  "immutable": true,
+  "issued_at": "2026-11-18",
+  "supersedes": "legacy-silent-release"
+}

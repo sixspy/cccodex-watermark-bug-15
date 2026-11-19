@@ -1,4 +1,5 @@
 from app.db import get_db
+from app.services.qi import is_stamped
 
 
 def list_reports(db_path: str | None = None) -> list[dict]:
@@ -12,18 +13,14 @@ def list_reports(db_path: str | None = None) -> list[dict]:
 def run_gap_report(as_of_date: str, db_path: str | None = None) -> dict:
     day = (as_of_date or "").strip() or "2026-11-16"
     with get_db(db_path) as conn:
-        released = conn.execute(
-            "SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'released_%'"
-        ).fetchone()["c"]
-        expected = conn.execute(
-            "SELECT COUNT(*) AS c FROM run_batches WHERE biz_date<=? AND status!='已作废'",
+        rows = conn.execute(
+            "SELECT * FROM run_batches WHERE biz_date<=? AND status!='已作废' ORDER BY id",
             (day,),
-        ).fetchone()["c"] + released
-        stamped = conn.execute(
-            "SELECT COUNT(*) AS c FROM run_batches WHERE biz_date<=? AND status='已盖印'",
-            (day,),
-        ).fetchone()["c"]
-        gap = expected - stamped
+        ).fetchall()
+        missing = [dict(r) for r in rows if not is_stamped(r)]
+        expected = len(rows)
+        stamped = expected - len(missing)
+        gap = len(missing)
         summary = (
             f"截至 {day}：应盖印 {expected}，已盖印 {stamped}，缺口 {gap}"
         )
@@ -35,4 +32,6 @@ def run_gap_report(as_of_date: str, db_path: str | None = None) -> dict:
         row = conn.execute(
             "SELECT * FROM gap_reports WHERE id=?", (cur.lastrowid,)
         ).fetchone()
-        return dict(row)
+        result = dict(row)
+        result["missing"] = missing
+        return result

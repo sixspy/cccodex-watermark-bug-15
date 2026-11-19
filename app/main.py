@@ -11,10 +11,15 @@ from app.services import (
     list_batches,
     list_reports,
     list_templates,
+    load_current_gate,
+    load_history,
+    qi_check,
+    release_overview,
     run_gap_report,
     stamp_batch,
     trace_downstream,
 )
+from app.db import get_db
 from app.services.errors import ServiceError
 from app.services.release import release_downstream
 
@@ -160,7 +165,26 @@ async def api_batch_detail(request: Request):
     batch = get_batch(batch_id)
     if not batch:
         return json_response({"error": "批次不存在"}, 404)
-    return json_response({"batch": batch})
+    with get_db() as conn:
+        qi = qi_check(conn, batch["run_code"])
+    return json_response({"batch": batch, "qi": qi})
+
+
+@app.router.get("/api/gate")
+async def api_gate(request: Request):
+    """闸口目录：现行齐检门槛 + 只读历史门槛。"""
+    try:
+        require_user(request)
+        gate = load_current_gate()
+    except ServiceError as exc:
+        return json_response({"ok": False, "error": exc.message}, exc.status_code)
+    return json_response(
+        {
+            "gate": gate,
+            "history": load_history(),
+            "credential": gate["credential"],
+        }
+    )
 
 
 @app.router.post("/api/batches/{batch_id}/stamp")
@@ -180,10 +204,23 @@ async def api_release(request: Request):
     try:
         require_user(request)
         body = await request.json()
-        result = release_downstream(str(body.get("run_code", "")))
+        result = release_downstream(
+            str(body.get("run_code", "")),
+            gate_credential=body.get("credential"),
+        )
     except ServiceError as exc:
         return json_response({"ok": False, "error": exc.message}, exc.status_code)
     return json_response({"ok": True, **result})
+
+
+@app.router.get("/api/release/overview")
+async def api_release_overview(request: Request):
+    """放行进度 / 下游表附页 / 印记值卡片 / 门槛芯片 的同一份数据源。"""
+    try:
+        require_user(request)
+        return json_response(release_overview())
+    except ServiceError as exc:
+        return json_response({"ok": False, "error": exc.message}, exc.status_code)
 
 
 @app.router.post("/api/trace")

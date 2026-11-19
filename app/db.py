@@ -5,12 +5,22 @@ from pathlib import Path
 from app.config import Config
 
 
-def connect(db_path: str | None = None) -> sqlite3.Connection:
+def connect(db_path: str | None = None, *, autocommit: bool = False) -> sqlite3.Connection:
     path = db_path or Config.database()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(
+        path,
+        check_same_thread=False,
+        timeout=15,
+        isolation_level=None if autocommit else "",
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 15000")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.DatabaseError:
+        pass
     return conn
 
 
@@ -22,6 +32,30 @@ def get_db(db_path: str | None = None):
         conn.commit()
     except Exception:
         conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@contextmanager
+def get_db_exclusive(db_path: str | None = None):
+    """写锁连接：BEGIN IMMEDIATE 抢占排他写锁，放行动作一次落成。
+
+    两侧仓管同时点放行时，后到者在此排队，不会双写放行态行。
+    """
+    conn = connect(db_path, autocommit=True)
+    began = False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        began = True
+        yield conn
+        conn.execute("COMMIT")
+    except Exception:
+        if began:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.DatabaseError:
+                pass
         raise
     finally:
         conn.close()
@@ -65,6 +99,37 @@ CREATE TABLE IF NOT EXISTS gap_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS release_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_code TEXT NOT NULL UNIQUE,
+  gate_id TEXT NOT NULL,
+  gate_version INTEGER NOT NULL,
+  gate_sha256 TEXT NOT NULL,
+  credential TEXT NOT NULL,
+  watermark_value TEXT NOT NULL,
+  released_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS legacy_release_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_code TEXT NOT NULL UNIQUE,
+  legacy_value TEXT,
+  reason TEXT NOT NULL,
+  quarantined_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS legacy_release_no_update
+BEFORE UPDATE ON legacy_release_history
+BEGIN
+  SELECT RAISE(ABORT, '只读历史：禁止修改');
+END;
+
+CREATE TRIGGER IF NOT EXISTS legacy_release_no_delete
+BEFORE DELETE ON legacy_release_history
+BEGIN
+  SELECT RAISE(ABORT, '只读历史：禁止删除');
+END;
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -91,9 +156,36 @@ SEED_EDGES = [
 ]
 
 
+def _quarantine_legacy_releases(conn: sqlite3.Connection) -> None:
+    """旧门槛（静默放行）的放行态迁入只读历史，并从现行 meta 中清除。
+
+    这样顺藤复验与放行进度都不再读得到“缺印已放行”的旧记录。
+    """
+    rows = conn.execute(
+        "SELECT key, value FROM meta WHERE key LIKE 'released\\_%' ESCAPE '\\'"
+    ).fetchall()
+    for row in rows:
+        code = row["key"][len("released_"):]
+        if not code:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO legacy_release_history(run_code, legacy_value, reason) "
+            "VALUES (?,?,?)",
+            (code, row["value"], "旧门槛静默放行，已迁入只读历史"),
+        )
+        conn.execute("DELETE FROM meta WHERE key=?", (row["key"],))
+
+
+def migrate(db_path: str | None = None) -> None:
+    with get_db(db_path) as conn:
+        conn.executescript(SCHEMA)
+        _quarantine_legacy_releases(conn)
+
+
 def init_db(db_path: str | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript(SCHEMA)
+        _quarantine_legacy_releases(conn)
         row = conn.execute("SELECT value FROM meta WHERE key='seeded'").fetchone()
         if row:
             return
